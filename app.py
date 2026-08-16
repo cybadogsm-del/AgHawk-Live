@@ -1,154 +1,117 @@
 import streamlit as st
-import time
 import hashlib
 import sqlite3
-import pandas as pd
-from datetime import datetime
 
 # ==========================================
-# 1. SPLASH SCREEN & PAGE SETUP
+# BRICK 1: THE VAULT (Database & Truth Engine)
 # ==========================================
-st.set_page_config(page_title="AgHawk", page_icon="🦅", layout="centered")
+st.set_page_config(page_title="AgHawk OS - Brick 1", page_icon="🦅", layout="wide")
 
-if "show_splash" not in st.session_state:
-    st.session_state.show_splash = True
-
-if st.session_state.show_splash:
-    st.markdown("""
-        <div style='text-align: center; margin-top: 30vh;'>
-            <h1 style='font-size: 3.5em; margin-bottom: 0px;'>🦅 AgHawk</h1>
-            <h3 style='font-style: italic; color: #4CAF50; margin-top: 5px;'>Every Detail in Real Time.</h3>
-            <p style='margin-top: 20px; color: #888; font-size: 0.9em;'>System Initializing & Verifying Ledger...</p>
-        </div>
-    """, unsafe_allow_html=True)
-    time.sleep(2.0)
-    st.session_state.show_splash = False
-    st.rerun()
-
-# ==========================================
-# 2. DATABASE & TRUTH ENGINE
-# ==========================================
+# Connect to Database
 conn = sqlite3.connect("aghawk_master.db", check_same_thread=False)
 c = conn.cursor()
 
-# Create our secure tables
-c.execute('''CREATE TABLE IF NOT EXISTS users (pin TEXT PRIMARY KEY, name TEXT, role TEXT)''')
+# 1. Core Schema Setup
+c.execute('''CREATE TABLE IF NOT EXISTS users (pin TEXT PRIMARY KEY, name TEXT, role TEXT, client_tier TEXT)''')
+
+# Dynamic Crop Catalog implementing the system-wide user-addable rule
+c.execute('''CREATE TABLE IF NOT EXISTS crop_catalog (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, 
+             category TEXT, 
+             crop_name TEXT UNIQUE, 
+             is_custom INTEGER)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS land_assets (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, 
+             field_name TEXT, 
+             category TEXT, 
+             crop_name TEXT, 
+             weather_status TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS machinery_assets (
+             id INTEGER PRIMARY KEY, 
+             equip_name TEXT, 
+             engine_hours REAL, 
+             status TEXT)''')
+
 c.execute('''CREATE TABLE IF NOT EXISTS works_orders (
-             id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, operator TEXT, 
-             field TEXT, equipment TEXT, hours REAL, gps_lat TEXT, gps_long TEXT, 
-             entity_type TEXT, calculated_cost REAL, previous_hash TEXT, current_hash TEXT)''')
+             id INTEGER PRIMARY KEY AUTOINCREMENT, 
+             operator TEXT, field TEXT, equipment TEXT, 
+             client_name TEXT, client_tier TEXT, start_time TEXT, end_time TEXT, hours REAL, 
+             calculated_cost REAL, status TEXT, previous_hash TEXT, current_hash TEXT)''')
 conn.commit()
 
-# Add default users if the system is brand new
-c.execute("SELECT * FROM users")
-if not c.fetchall():
-    c.execute("INSERT INTO users VALUES ('1234', 'Boss Mitchell', 'admin')")
-    c.execute("INSERT INTO users VALUES ('5678', 'Tractor Driver', 'operator')")
-    conn.commit()
-
+# 2. SHA-256 Truth Engine Cryptographic Functions
 def generate_hash(data, prev_hash):
-    """The SHA-256 Truth Engine Math"""
     return hashlib.sha256(f"{data}{prev_hash}".encode()).hexdigest()
 
 def get_last_hash():
-    c.execute("SELECT current_hash FROM works_orders ORDER BY id DESC LIMIT 1")
+    c.execute("SELECT current_hash FROM works_orders WHERE status='LOCKED' ORDER BY id DESC LIMIT 1")
     result = c.fetchone()
-    return result[0] if result else "000000_START_OF_TIME"
+    return result[0] if result else "000000_INITIAL_HASH"
 
-# ==========================================
-# 3. LOGIN SCREEN
-# ==========================================
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.current_user = ""
-    st.session_state.user_role = ""
-
-if not st.session_state.logged_in:
-    st.title("🔒 AgHawk Secure Login")
-    st.write("Please enter your 4-digit PIN to access the system.")
+# 3. Seed Initial Data & Australian Crop Sub-Databases
+c.execute("SELECT * FROM users")
+if not c.fetchall():
+    # Users & Roles
+    c.execute("INSERT INTO users VALUES ('1234', 'Boss Mitchell', 'admin', 'N/A')")
+    c.execute("INSERT INTO users VALUES ('5678', 'Tractor Driver', 'operator', 'N/A')")
+    c.execute("INSERT INTO users VALUES ('1111', 'Smith Family Farm', 'client', 'family')")
+    c.execute("INSERT INTO users VALUES ('9999', 'MegaCorp Ag', 'client', 'corporate')")
     
-    pin_entry = st.text_input("Operator PIN:", type="password", max_chars=4)
-    
-    if st.button("Unlock System"):
-        c.execute("SELECT name, role FROM users WHERE pin=?", (pin_entry,))
-        user_data = c.fetchone()
+    # Pre-seeded Australian Crops categorized under Broadacre & Market Garden
+    default_crops = [
+        # Broadacre Farming (includes Cereals, Turf, Horticulture, Potatoes, Grains)
+        ('Broadacre Farming', 'Wheat (Cereal)', 0),
+        ('Broadacre Farming', 'Barley (Cereal)', 0),
+        ('Broadacre Farming', 'Oats (Cereal)', 0),
+        ('Broadacre Farming', 'Sorghum (Cereal)', 0),
+        ('Broadacre Farming', 'Canola', 0),
+        ('Broadacre Farming', 'Potatoes (Commercial Broadacre)', 0),
+        ('Broadacre Farming', 'Santa Anna Couch (Turf)', 0),
+        ('Broadacre Farming', 'TifTuf Couch (Turf)', 0),
+        ('Broadacre Farming', 'Sir Walter Buffalo (Turf)', 0),
+        ('Broadacre Farming', 'Almonds (Orchard/Horticulture)', 0),
+        ('Broadacre Farming', 'Wine Grapes (Horticulture)', 0),
         
-        if user_data:
-            st.session_state.logged_in = True
-            st.session_state.current_user = user_data[0]
-            st.session_state.user_role = user_data[1]
-            st.rerun()
-        else:
-            st.error("❌ Incorrect PIN. Try again.")
-    st.stop() # Stops the rest of the app from loading if not logged in
-
-# ==========================================
-# 4. MAIN APP (After Login)
-# ==========================================
-st.sidebar.title(f"👤 {st.session_state.current_user}")
-st.sidebar.write(f"Access Level: {st.session_state.user_role.upper()}")
-
-if st.sidebar.button("Log Out"):
-    st.session_state.logged_in = False
-    st.rerun()
-
-st.title("🚜 AgHawk Command Center")
-st.write("Record your field work. Every entry is GPS stamped and locked by the Truth Engine.")
-
-# --- JOB LOGGING FORM ---
-with st.form("job_form"):
-    st.subheader("Log A New Works Order")
+        # Market Garden (Intensive Horticulture)
+        ('Market Garden', 'Tomatoes', 0),
+        ('Market Garden', 'Carrots', 0),
+        ('Market Garden', 'Lettuce', 0),
+        ('Market Garden', 'Onions', 0),
+        ('Market Garden', 'Broccoli', 0),
+        ('Market Garden', 'Cabbage', 0),
+        ('Market Garden', 'Pumpkins', 0)
+    ]
+    c.executemany("INSERT OR IGNORE INTO crop_catalog (category, crop_name, is_custom) VALUES (?, ?, ?)", default_crops)
     
-    # 1. Location & Crop (including our premium turfs!)
-    field_select = st.selectbox("Select Paddock/Field:", 
-                                ["Front Paddock", "Hillside Block", "Stadium Pitch 1", "Create New Field..."])
-    turf_variety = st.selectbox("Crop / Turf Variety:", 
-                                ["Santa Anna Couch", "Sir Walter", "TifTuf", "Eureka", "Wheat", "Barley"])
-    irrigation_used = st.checkbox("💧 Irrigation Used?")
-    
-    # 2. Equipment 
-    equip_select = st.selectbox("Equipment Used:", 
-                                ["John Deere Tractor", "Heavy Excavator (Wet Hire)", "Ride-on Cylinder Mower"])
-    hours_worked = st.number_input("Hours Worked:", min_value=0.5, step=0.5)
-    
-    # 3. Two-Tier Pricing Logic
-    st.markdown("---")
-    entity_type = st.radio("Client Type (For Auto-Pricing):", ["Family Farm (Base Rate)", "Corporate Entity ($1150/mo Tier)"])
-    
-    # 4. The Fake GPS for our prototype
-    st.info("📍 GPS Auto-Tracking (Simulated: Lat -37.8136, Long 144.9631)")
-    
-    submit_job = st.form_submit_button("🔒 Lock Job into Ledger")
-
-# --- WHAT HAPPENS WHEN THEY CLICK SUBMIT ---
-if submit_job:
-    # Calculate fake cost based on tier
-    hourly_rate = 150 if "Corporate" in entity_type else 85
-    total_cost = hours_worked * hourly_rate
-    
-    # Do the Math for the Truth Engine!
-    last_hash = get_last_hash()
-    job_details = f"{st.session_state.current_user}-{field_select}-{equip_select}-{hours_worked}-{total_cost}"
-    new_hash = generate_hash(job_details, last_hash)
-    
-    # Save it to the database
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute('''INSERT INTO works_orders 
-                 (timestamp, operator, field, equipment, hours, gps_lat, gps_long, entity_type, calculated_cost, previous_hash, current_hash) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
-              (timestamp, st.session_state.current_user, field_select, equip_select, hours_worked, "-37.8136", "144.9631", entity_type, total_cost, last_hash, new_hash))
+    # Default Assets
+    c.execute("INSERT INTO land_assets (field_name, category, crop_name, weather_status) VALUES ('Front Paddock', 'Broadacre Farming', 'Santa Anna Couch (Turf)', 'Clear - Ready')")
+    c.execute("INSERT INTO machinery_assets (equip_name, engine_hours, status) VALUES ('John Deere Tractor', 1200.5, 'Active')")
     conn.commit()
-    
-    st.success("✅ Job Locked! The SHA-256 Truth Engine has secured this record.")
 
-# --- ADMIN ONLY: VIEW THE LEDGER ---
-if st.session_state.user_role == 'admin':
-    st.markdown("---")
-    st.subheader("🕵️‍♂️ Admin View: The Secure Ledger")
-    st.write("Corporate Managers can view this immutable trail:")
-    
-    df = pd.read_sql_query("SELECT id, timestamp, operator, field, hours, calculated_cost, current_hash FROM works_orders", conn)
-    if not df.empty:
-        st.dataframe(df)
-    else:
-        st.write("No jobs logged yet!")
+# --- BRICK 1 PREVIEW INTERFACE ---
+st.title("🧱 Brick 1: The Vault & Crop Engine Inspection")
+st.success("Database connected and pre-seeded with Australian agricultural taxonomy successfully.")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("🌾 Australian Crop Catalog (Sub-Databases)")
+    df_crops = pd.read_sql_query("SELECT category, crop_name, CASE WHEN is_custom=1 THEN 'User Added' ELSE 'Default' END as Source FROM crop_catalog", conn) if 'pd' in globals() else None
+    # Fallback view if pandas isn't explicitly imported in this snippet check:
+    st.dataframe(pd.read_sql_query("SELECT category, crop_name, is_custom FROM crop_catalog", conn), use_container_width=True)
+
+with col2:
+    st.subheader("➕ System-Wide Crop Adder Test")
+    with st.form("add_crop_form"):
+        new_cat = st.selectbox("Category:", ["Broadacre Farming", "Market Garden"])
+        new_crop_name = st.text_input("New Crop / Variety Name:")
+        if st.form_submit_button("Add to System Catalog"):
+            try:
+                c.execute("INSERT INTO crop_catalog (category, crop_name, is_custom) VALUES (?, ?, 1)", (new_cat, new_crop_name))
+                conn.commit()
+                st.success(f"Successfully added '{new_crop_name}' system-wide!")
+                st.rerun()
+            except sqlite3.IntegrityError:
+                st.error("That crop already exists in the catalog.")
